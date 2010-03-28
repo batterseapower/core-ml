@@ -1,0 +1,4 @@
+# Build artifacts
+*.hi
+*.o
+dist/
