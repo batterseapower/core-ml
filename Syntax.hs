@@ -1,8 +1,10 @@
-{-# LANGUAGE PatternGuards, ViewPatterns #-}
+{-# LANGUAGE PatternGuards, ViewPatterns, DeriveDataTypeable #-}
 module Syntax where
 
 import Renaming
 import Utilities
+
+import Data.Data
 
 
 type Var = Name
@@ -10,18 +12,18 @@ type Var = Name
 type DataCon = String
 
 data PrimOp = Add | Subtract
-            deriving (Eq, Show)
+            deriving (Eq, Show, Typeable, Data)
 
 data AltCon = DataAlt DataCon [Var] | LiteralAlt Literal
-            deriving (Show)
+            deriving (Show, Typeable, Data)
 
 type Literal = Int
 
 data Term = Var Var | Value Value | App Term Term | LetRec [(Var, Value)] Term | Let Var Term Term | Case Term [(AltCon, Term)]
-          deriving (Show)
+          deriving (Show, Typeable, Data)
 
 data Value = Lambda Var Term | PrimOp PrimOp [Value] | Data DataCon [Var] | Literal Literal
-           deriving (Show)
+           deriving (Show, Typeable, Data)
 
 pPrintPrecDataCon :: PrettyLevel -> Rational -> DataCon -> [Var] -> Doc
 pPrintPrecDataCon level prec dc xs
@@ -60,7 +62,10 @@ pPrintPrecLetRec level prec xvs inside
   | otherwise = prettyParen (prec > noPrec) $ hang (if level == haskellLevel then text "let" else text "let") 2 (vcat [text "val rec" <+> pPrintPrec level noPrec x <+> text "=" <+> pPrintPrec level noPrec v | (x, v) <- xvs]) $$ text "in" <+> inside level noPrec <+> text "end"
 
 pPrintPrecLet :: PrettyLevel -> Rational -> Var -> (PrettyLevel -> Rational -> Doc) -> (PrettyLevel -> Rational -> Doc) -> Doc
-pPrintPrecLet level prec x inside1 inside2 = prettyParen (prec > noPrec) $ hang (text "let val") 2 (pPrintPrec level noPrec x <+> text "=" <+> inside1 level noPrec) $$ text "in" <+> inside2 level noPrec <+> text "end"
+pPrintPrecLet level prec x inside1 inside2 = pPrintPrecLets level prec [(x, inside1)] inside2
+
+pPrintPrecLets :: PrettyLevel -> Rational -> [(Var, PrettyLevel -> Rational -> Doc)] -> (PrettyLevel -> Rational -> Doc) -> Doc
+pPrintPrecLets level prec xinsides inside = prettyParen (prec > noPrec) $ hang (text "let val") 2 (vcat [pPrintPrec level noPrec x <+> text "=" <+> inside level noPrec | (x, inside) <- xinsides]) $$ text "in" <+> inside level noPrec <+> text "end"
 
 pPrintPrecCase :: PrettyLevel -> Rational -> (PrettyLevel -> Rational -> Doc) -> [(AltCon, Term)] -> Doc
 pPrintPrecCase level prec scrut alts = case alts of

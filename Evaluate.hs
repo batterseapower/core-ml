@@ -1,15 +1,19 @@
-{-# LANGUAGE PatternGuards, ViewPatterns #-}
+{-# LANGUAGE PatternGuards, ViewPatterns, DeriveDataTypeable #-}
 module Evaluate where
 
 import Renaming
 import Syntax
 import Utilities
 
+import Data.Data
 import Data.List
 
 
-data HeapGroup = HeapNonRec (Out Var) PureRenaming (In Value)
-               | HeapRec [(Out Var, PureRenaming, In Value)]
+data RecFlag = Rec | NonRec
+             deriving (Show, Typeable, Data)
+
+data HeapGroup = HeapGroup RecFlag [(Out Var, PureRenaming, In Value)]
+               deriving (Show, Typeable, Data)
 type Heap = [HeapGroup]
 
 type EvaluationContext = [EvaluationContextFrame]
@@ -17,18 +21,22 @@ type InnerEvaluationContext = EvaluationContext
 
 data EvaluationContextFrame = ValueConsumerFrame ValueConsumer
                             | HeapBindFrame HeapGroup
+                            deriving (Show, Typeable, Data)
 
 data ValueConsumer = AppliedTo PureRenaming (In Term)
                    | PrimOpArgument PrimOp [Out Value]
                    | Scrutinise PureRenaming [(AltCon, In Term)]
                    | LetBind PureRenaming (In Var) (In Term)
+                   deriving (Show, Typeable, Data)
 
 data Result = Answer Heap Renaming (In Value)
             | Force InnerEvaluationContext InScopeSet (Out Var)
+            deriving (Show, Typeable, Data)
 
 data Step = Eval EvaluationContext Renaming (In Term)
           | RebuildEvaluationContext EvaluationContext Result
           | Done Result
+          deriving (Show, Typeable, Data)
 
 
 resultInScopeSet :: Result -> InScopeSet
@@ -38,7 +46,7 @@ resultInScopeSet (Force _ iss _) = iss
 
 instance Pretty Step where
     pPrintPrec level prec s = case s of
-        Eval k rn e -> pPrintPrecEvaluationContext level prec (inScopeSet rn) k (\level prec -> pPrintFocused "focused" level prec e)
+        Eval k rn e -> pPrintPrecEvaluationContext level prec (inScopeSet rn) k (\level prec -> pPrintFocused "focused" level prec (renameTerm rn e))
         RebuildEvaluationContext k a -> pPrintPrecEvaluationContext level prec (resultInScopeSet a) k (\level prec -> pPrintFocused "cofocused" level prec a)
         Done a -> pPrintPrec level prec a
 
@@ -66,16 +74,16 @@ pPrintPrecEvaluationContextFrame level prec iss kf inside = case kf of
         PrimOpArgument pop vs -> pPrintPrecApp level prec (\level prec -> pPrintPrec level prec (Value (PrimOp pop vs))) inside
         Scrutinise rn alts    -> pPrintPrecCase level prec inside (map (renameAlt (joinRenaming rn iss)) alts)
         LetBind rn x e        -> pPrintPrecLet level prec x inside (\level prec -> pPrintPrec level prec (renameTerm (insertRenaming x x $ joinRenaming rn iss) e))
-    HeapBindFrame (HeapNonRec x' rn v) -> pPrintPrecLet level prec x' (\level prec -> pPrintPrec level prec (renameValue (joinRenaming rn iss) v)) inside
-    HeapBindFrame (HeapRec xrnvs)      -> pPrintPrecLetRec level prec [(x', renameValue (joinRenaming rn iss) v) | (x', rn, v) <- xrnvs] inside
+    HeapBindFrame (HeapGroup rf xrnvs) -> case rf of NonRec -> pPrintPrecLets level prec (map (second (\v level prec -> pPrintPrec level prec v)) xvs') inside
+                                                     Rec    -> pPrintPrecLetRec level prec xvs' inside
+      where xvs' = [(x', renameValue (joinRenaming rn iss) v) | (x', rn, v) <- xrnvs]
 
 
 flattenHeap :: Heap -> [(Out Var, PureRenaming, In Value)]
 flattenHeap = concatMap flattenHeapGroup
 
 flattenHeapGroup :: HeapGroup -> [(Out Var, PureRenaming, In Value)]
-flattenHeapGroup (HeapNonRec x' rn v) = [(x', rn, v)]
-flattenHeapGroup (HeapRec xrnvs)      = xrnvs
+flattenHeapGroup (HeapGroup _ xrnvs) = xrnvs
 
 
 eval, eval' :: EvaluationContext -> Renaming -> In Term -> Step
@@ -85,7 +93,7 @@ eval' k rn e = case e of
     Var x   -> rebuildEvaluationContext k $ Force [] (inScopeSet rn) (rename rn x)
     Value v -> rebuildEvaluationContext k $ Answer [] rn v
     App e1 e2 -> eval (ValueConsumerFrame (AppliedTo (pureRenaming rn) e2) : k) rn e1
-    LetRec (unzip -> (xs, vs)) e -> eval (HeapBindFrame (HeapRec (zip3 xs' (repeat (pureRenaming rn')) vs)) : k) rn' e
+    LetRec (unzip -> (xs, vs)) e -> eval (HeapBindFrame (HeapGroup Rec (zip3 xs' (repeat (pureRenaming rn')) vs)) : k) rn' e
       where (rn', xs') = renameBinders rn xs
     Let x e1 e2 -> eval (ValueConsumerFrame (LetBind (pureRenaming rn) x e2) : k) rn e1
     Case e alts -> eval (ValueConsumerFrame (Scrutinise (pureRenaming rn) alts) : k) rn e
@@ -113,12 +121,13 @@ rebuildValueConsumer :: Renaming -> In Value -> In ValueConsumer -> EvaluationCo
 rebuildValueConsumer rnv v vc k = case vc of
     AppliedTo rnvc e2
       | PrimOp pop vs <- v -> eval (ValueConsumerFrame (PrimOpArgument pop vs)            : k) (joinRenaming rnvc (inScopeSet rnv)) e2
-      | Lambda x e1b  <- v -> eval (ValueConsumerFrame (LetBind (pureRenaming rnv) x e1b) : k) (joinRenaming rnvc (inScopeSet rnv)) e2
+      | Lambda x e1b  <- v -> case e2 of Var y -> eval k (insertRenaming x (pureRename rnvc y) rnv) e1b -- Cheeky hack to head off excessive value duplication
+                                         _     -> eval (ValueConsumerFrame (LetBind (pureRenaming rnv) x e1b) : k) (joinRenaming rnvc (inScopeSet rnv)) e2
     PrimOpArgument pop vs -> rebuildEvaluationContext k $ Answer [] (mkRenaming (inScopeSet rnv)) (primop pop vs (renameValue rnv v))
     Scrutinise rnvc alts
       | Literal l  <- v -> head [eval k (joinRenaming rnvc (inScopeSet rnv)) e | (LiteralAlt l', e) <- alts, l' == l]
       | Data dc xs <- v -> head [eval k (insertRenamings (xs' `zip` map (rename rnv) xs) (joinRenaming rnvc (inScopeSet rnv))) e | (DataAlt dc' xs', e) <- alts, dc' == dc]
-    LetBind rnvc x e -> eval (HeapBindFrame (HeapNonRec x' (pureRenaming rnv) v) : k) rnv' e
+    LetBind rnvc x e -> eval (HeapBindFrame (HeapGroup NonRec [(x', pureRenaming rnv, v)]) : k) rnv' e
       where (rnv', x') = renameBinder (joinRenaming rnvc (inScopeSet rnv)) x
 
 

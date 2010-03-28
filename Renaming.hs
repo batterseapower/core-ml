@@ -1,4 +1,4 @@
-{-# LANGUAGE PatternGuards #-}
+{-# LANGUAGE PatternGuards, DeriveDataTypeable, StandaloneDeriving #-}
 module Renaming (
     Name(..),
     
@@ -21,6 +21,7 @@ import Utilities
 
 import Control.Arrow ((&&&))
 
+import Data.Data
 import qualified Data.Set as S
 import qualified Data.Map as M
 import Data.Function
@@ -29,6 +30,14 @@ import Data.Ord
 import Data.Unique.Id
 
 import System.IO.Unsafe (unsafePerformIO)
+
+
+deriving instance Typeable Id
+
+instance Data Id where
+    toConstr _   = error "Data.Unique.Id (in Renaming): toConstr"
+    gunfold _ _  = error "Data.Unique.Id (in Renaming): gunfold"
+    dataTypeOf _ = mkNoRepType "Data.Unique.Id.Id"
 
 
 {-# NOINLINE uniqAwayIdSupply #-}
@@ -49,7 +58,7 @@ instance (Pretty k, Pretty a) => Pretty (M.Map k a) where
 data Name = Name {
     name_string :: String,
     name_id :: Maybe Id -- Initially, generate names with no Ids and compare on the String - improves pretty printing only!
-  }
+  } deriving (Typeable, Data)
 
 selectNameKey :: Name -> Either String Id
 selectNameKey n = maybe (Left $ name_string n) Right (name_id n)
@@ -91,7 +100,7 @@ data Renaming = Renaming {
      -- Set of variables free in output: used for manufacturing fresh names
      -- INVARIANT: renaming_iss >= range(renaming_rn)
     renaming_iss :: InScopeSet
-  } deriving (Show)
+  } deriving (Show, Typeable, Data)
 
 instance Pretty Renaming where
     pPrintPrec level prec = pPrintPrec level prec . renaming_rn
