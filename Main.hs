@@ -7,7 +7,6 @@ import Renaming
 import Utilities
 
 import Control.Monad
-import Data.Data
 import Data.Maybe
 import Data.Generics.Uniplate.Data
 import System.IO

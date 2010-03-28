@@ -1,13 +1,13 @@
 Cabal-Version:      >= 1.2
 Build-Type:         Simple
-Name:               equational
+Name:               core-ml
 Version:            0.1
 Maintainer:         Max Bolingbroke <batterseapower@hotmail.com>
 Homepage:           http://www.github.com/batterseapower/equational
 License:            BSD3
 License-File:       LICENSE
 Author:             Max Bolingbroke
-Synopsis:           Equational reasoning formatter in Haskell
+Synopsis:           Reducer for the core of a ML-like language
 Category:           Language
 
 Executable dual-calculus
